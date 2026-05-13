@@ -208,7 +208,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_whoami",
         annotations=_read_only_annotations("Gmail: Authenticated Account"),
     )
-    async def gmail_whoami(_: WhoamiInput) -> str:
+    async def gmail_whoami(params: WhoamiInput) -> str:
         """Return the email address of the Google account this server is connected to.
 
         Use this to confirm the agent is acting on the **work** account before
