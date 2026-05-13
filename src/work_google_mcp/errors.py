@@ -19,7 +19,7 @@ def handle_google_error(e: Exception) -> str:
         # Try to extract the API-supplied reason for richer context.
         reason = ""
         try:
-            details = e.error_details  # type: ignore[attr-defined]
+            details = e.error_details
             if isinstance(details, list) and details:
                 reason = f" — {details[0].get('reason') or details[0].get('message') or ''}"
         except Exception:

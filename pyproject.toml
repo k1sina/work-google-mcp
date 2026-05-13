@@ -67,6 +67,13 @@ files = ["src/work_google_mcp"]
 module = ["googleapiclient.*", "google_auth_oauthlib.*", "google.*"]
 ignore_missing_imports = true
 
+# Google's API libraries return `Any` from most calls. Letting mypy flag every
+# untyped call would mean wrapping every line in cast()/ignore comments without
+# adding real safety. Scope the relaxation to the module that touches them.
+[[tool.mypy.overrides]]
+module = ["work_google_mcp.auth"]
+disable_error_code = ["no-untyped-call", "no-any-return"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

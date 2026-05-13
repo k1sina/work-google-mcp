@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..errors import handle_google_error
@@ -190,12 +191,14 @@ def _markdown_message_summaries(
 # ---------------------------------------------------------------------------
 
 
-READ_ONLY_ANNOTATIONS = {
-    "readOnlyHint": True,
-    "destructiveHint": False,
-    "idempotentHint": True,
-    "openWorldHint": True,
-}
+def _read_only_annotations(title: str) -> ToolAnnotations:
+    return ToolAnnotations(
+        title=title,
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
 
 
 def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
@@ -203,7 +206,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
 
     @mcp.tool(
         name="gmail_whoami",
-        annotations={"title": "Gmail: Authenticated Account", **READ_ONLY_ANNOTATIONS},
+        annotations=_read_only_annotations("Gmail: Authenticated Account"),
     )
     async def gmail_whoami(_: WhoamiInput) -> str:
         """Return the email address of the Google account this server is connected to.
@@ -234,7 +237,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
 
     @mcp.tool(
         name="gmail_list_labels",
-        annotations={"title": "Gmail: List Labels", **READ_ONLY_ANNOTATIONS},
+        annotations=_read_only_annotations("Gmail: List Labels"),
     )
     async def gmail_list_labels(params: ListLabelsInput) -> str:
         """List all labels (system + user) in the authenticated mailbox.
@@ -268,7 +271,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
 
     @mcp.tool(
         name="gmail_search_messages",
-        annotations={"title": "Gmail: Search Messages", **READ_ONLY_ANNOTATIONS},
+        annotations=_read_only_annotations("Gmail: Search Messages"),
     )
     async def gmail_search_messages(params: SearchMessagesInput) -> str:
         """Search messages using Gmail's query syntax.
@@ -338,7 +341,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
 
     @mcp.tool(
         name="gmail_search_threads",
-        annotations={"title": "Gmail: Search Threads", **READ_ONLY_ANNOTATIONS},
+        annotations=_read_only_annotations("Gmail: Search Threads"),
     )
     async def gmail_search_threads(params: SearchThreadsInput) -> str:
         """Search threads matching a Gmail query.
@@ -399,7 +402,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
 
     @mcp.tool(
         name="gmail_get_message",
-        annotations={"title": "Gmail: Get Message", **READ_ONLY_ANNOTATIONS},
+        annotations=_read_only_annotations("Gmail: Get Message"),
     )
     async def gmail_get_message(params: GetMessageInput) -> str:
         """Fetch a single message by ID with decoded body and attachment metadata.
@@ -430,7 +433,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
 
     @mcp.tool(
         name="gmail_get_thread",
-        annotations={"title": "Gmail: Get Thread", **READ_ONLY_ANNOTATIONS},
+        annotations=_read_only_annotations("Gmail: Get Thread"),
     )
     async def gmail_get_thread(params: GetThreadInput) -> str:
         """Fetch a single thread by ID with all messages, ordered oldest-first.
