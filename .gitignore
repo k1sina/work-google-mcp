@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# uv
+uv.lock
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Secrets — paranoid coverage, never check these in
+*token*.json
+*client_secret*.json
+*credentials*.json
+.env
+.env.local
+.env.*.local
