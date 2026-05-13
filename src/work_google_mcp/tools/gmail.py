@@ -1,19 +1,23 @@
 """Phase 1 Gmail tools — all read-only.
 
-The MCP tool surface is a thin layer over googleapiclient. We register tools on
-the FastMCP server in `register(mcp, service_provider)`, where `service_provider`
-is a zero-arg callable returning a Gmail v1 Resource. This indirection lets tests
-inject a mock service.
+Tools are registered on a FastMCP server via `register(mcp, service_provider)`,
+where `service_provider` is a zero-arg callable returning a Gmail v1 client.
+This indirection lets tests inject a mock service.
+
+Tool arguments use the canonical FastMCP pattern: individual function arguments
+annotated with ``Annotated[T, Field(...)]``. FastMCP exposes each one as a
+top-level field in the tool's input schema. (A single ``params: BaseModel``
+argument nests under ``params`` instead, which we don't want.)
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from ..errors import handle_google_error
 from ..formatting import (
@@ -28,91 +32,64 @@ from ..formatting import (
 ServiceProvider = Callable[[], Any]
 
 
-# ---------------------------------------------------------------------------
-# Input models
-# ---------------------------------------------------------------------------
-
-
-class _Base(BaseModel):
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        extra="forbid",
-    )
-
-
-class WhoamiInput(_Base):
-    pass
-
-
-class ListLabelsInput(_Base):
-    response_format: ResponseFormat = Field(
-        default=ResponseFormat.JSON,
-        description="'json' for machine-readable, 'markdown' for a human-readable list.",
-    )
-
-
-class SearchMessagesInput(_Base):
-    query: str = Field(
-        ...,
+# Reusable Annotated aliases — declare once, reference per-tool.
+_QueryArg = Annotated[
+    str,
+    Field(
         description=(
             "Gmail search query. Examples: 'from:alice@example.com is:unread', "
             "'subject:\"Q4 review\" after:2026/01/01', 'has:attachment label:Finance'."
         ),
         min_length=1,
         max_length=1000,
-    )
-    max_results: int = Field(
-        default=25,
-        description="Maximum messages to return per page (1-100).",
-        ge=1,
-        le=100,
-    )
-    page_token: str | None = Field(
+    ),
+]
+_MaxResultsArg = Annotated[
+    int,
+    Field(description="Maximum results per page (1-100).", ge=1, le=100),
+]
+_PageTokenArg = Annotated[
+    str | None,
+    Field(
         default=None,
         description="Opaque token from a previous response's next_page_token to fetch the next page.",
-    )
-    include_spam_trash: bool = Field(
-        default=False,
-        description="If true, include messages from Spam and Trash.",
-    )
-    response_format: ResponseFormat = Field(
+    ),
+]
+_IncludeSpamTrashArg = Annotated[
+    bool,
+    Field(default=False, description="If true, include messages from Spam and Trash."),
+]
+_ResponseFormatArg = Annotated[
+    ResponseFormat,
+    Field(
         default=ResponseFormat.JSON,
         description="'json' for structured output, 'markdown' for a readable summary.",
-    )
-
-
-class SearchThreadsInput(_Base):
-    query: str = Field(..., min_length=1, max_length=1000)
-    max_results: int = Field(default=25, ge=1, le=100)
-    page_token: str | None = Field(default=None)
-    include_spam_trash: bool = Field(default=False)
-    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
-
-
-class GetMessageInput(_Base):
-    message_id: str = Field(
-        ...,
+    ),
+]
+_MessageIdArg = Annotated[
+    str,
+    Field(
         description="The Gmail message ID (the `id` field from a search result).",
         min_length=1,
         max_length=200,
-    )
-    max_body_chars: int = Field(
-        default=20000,
-        description="Truncate the decoded text body to this many characters (1-200000).",
+    ),
+]
+_ThreadIdArg = Annotated[
+    str,
+    Field(description="The Gmail thread ID.", min_length=1, max_length=200),
+]
+_MaxBodyCharsArg = Annotated[
+    int,
+    Field(
+        description="Truncate the decoded body to this many characters (1-200000).",
         ge=1,
         le=200_000,
-    )
-    include_html: bool = Field(
-        default=False,
-        description="If true, also include the HTML body (truncated to the same cap).",
-    )
-
-
-class GetThreadInput(_Base):
-    thread_id: str = Field(..., min_length=1, max_length=200)
-    max_body_chars: int = Field(default=10000, ge=1, le=200_000)
-    include_html: bool = Field(default=False)
+    ),
+]
+_IncludeHtmlArg = Annotated[
+    bool,
+    Field(default=False, description="If true, also return the HTML body (same cap)."),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -186,11 +163,6 @@ def _markdown_message_summaries(
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Tool registration
-# ---------------------------------------------------------------------------
-
-
 def _read_only_annotations(title: str) -> ToolAnnotations:
     return ToolAnnotations(
         title=title,
@@ -201,6 +173,11 @@ def _read_only_annotations(title: str) -> ToolAnnotations:
     )
 
 
+# ---------------------------------------------------------------------------
+# Tool registration
+# ---------------------------------------------------------------------------
+
+
 def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
     """Register all Phase 1 Gmail tools on the given FastMCP server."""
 
@@ -208,7 +185,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_whoami",
         annotations=_read_only_annotations("Gmail: Authenticated Account"),
     )
-    async def gmail_whoami(params: WhoamiInput) -> str:
+    async def gmail_whoami() -> str:
         """Return the email address of the Google account this server is connected to.
 
         Use this to confirm the agent is acting on the **work** account before
@@ -239,15 +216,12 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_list_labels",
         annotations=_read_only_annotations("Gmail: List Labels"),
     )
-    async def gmail_list_labels(params: ListLabelsInput) -> str:
+    async def gmail_list_labels(response_format: _ResponseFormatArg = ResponseFormat.JSON) -> str:
         """List all labels (system + user) in the authenticated mailbox.
 
-        Args:
-            params: { response_format: 'json' | 'markdown' }
-
         Returns:
-            JSON:    {"labels": [{"id": str, "name": str, "type": "system"|"user"}, ...]}
-            MD:      A two-section list grouped by type.
+            JSON: {"labels": [{"id": str, "name": str, "type": "system"|"user"}, ...]}
+            Markdown: a two-section list grouped by type.
         """
         try:
             svc = service_provider()
@@ -256,7 +230,7 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
                 {"id": lbl.get("id"), "name": lbl.get("name"), "type": lbl.get("type")}
                 for lbl in data.get("labels", [])
             ]
-            if params.response_format == ResponseFormat.JSON:
+            if response_format == ResponseFormat.JSON:
                 return to_json({"labels": labels})
 
             system = [lbl for lbl in labels if lbl["type"] == "system"]
@@ -273,44 +247,47 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_search_messages",
         annotations=_read_only_annotations("Gmail: Search Messages"),
     )
-    async def gmail_search_messages(params: SearchMessagesInput) -> str:
+    async def gmail_search_messages(
+        query: _QueryArg,
+        max_results: _MaxResultsArg = 25,
+        page_token: _PageTokenArg = None,
+        include_spam_trash: _IncludeSpamTrashArg = False,
+        response_format: _ResponseFormatArg = ResponseFormat.JSON,
+    ) -> str:
         """Search messages using Gmail's query syntax.
 
         Returns header-level summaries (no message bodies). Call `gmail_get_message`
         with an ID from the results to read the full text of a specific message.
 
         Args:
-            params:
-                - query (str): Gmail search query (see Gmail's search operators).
-                - max_results (int 1-100, default 25)
-                - page_token (str | None): opaque token for the next page
-                - include_spam_trash (bool, default false)
-                - response_format ('json' | 'markdown')
+            query: Gmail search query (e.g. 'from:alice is:unread').
+            max_results: 1-100, default 25.
+            page_token: Opaque token from a previous response's next_page_token.
+            include_spam_trash: If true, include Spam and Trash.
+            response_format: 'json' or 'markdown'.
 
-        Returns:
-            JSON:
-                {
-                  "result_size_estimate": int,
-                  "count": int,
-                  "next_page_token": str | null,
-                  "messages": [{"id", "thread_id", "subject", "from", "to", "cc",
-                                "date", "snippet", "label_ids"}, ...]
-                }
+        Returns (JSON):
+            {
+              "result_size_estimate": int,
+              "count": int,
+              "next_page_token": str | null,
+              "messages": [{"id", "thread_id", "subject", "from", "to", "cc",
+                            "date", "snippet", "label_ids"}, ...]
+            }
         """
         try:
             svc = service_provider()
             req_args: dict[str, Any] = {
                 "userId": "me",
-                "q": params.query,
-                "maxResults": params.max_results,
-                "includeSpamTrash": params.include_spam_trash,
+                "q": query,
+                "maxResults": max_results,
+                "includeSpamTrash": include_spam_trash,
             }
-            if params.page_token:
-                req_args["pageToken"] = params.page_token
+            if page_token:
+                req_args["pageToken"] = page_token
             listing = svc.users().messages().list(**req_args).execute()
             ids = [m["id"] for m in listing.get("messages", []) if m.get("id")]
 
-            # Fetch each message's metadata. Gmail has no bulk-get, so this is N calls.
             summaries: list[dict[str, Any]] = []
             for mid in ids:
                 msg = (
@@ -333,9 +310,9 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
                 "next_page_token": next_token,
                 "messages": summaries,
             }
-            if params.response_format == ResponseFormat.JSON:
+            if response_format == ResponseFormat.JSON:
                 return to_json(payload)
-            return _markdown_message_summaries(summaries, f"Search: `{params.query}`", next_token)
+            return _markdown_message_summaries(summaries, f"Search: `{query}`", next_token)
         except Exception as e:
             return handle_google_error(e)
 
@@ -343,7 +320,13 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_search_threads",
         annotations=_read_only_annotations("Gmail: Search Threads"),
     )
-    async def gmail_search_threads(params: SearchThreadsInput) -> str:
+    async def gmail_search_threads(
+        query: _QueryArg,
+        max_results: _MaxResultsArg = 25,
+        page_token: _PageTokenArg = None,
+        include_spam_trash: _IncludeSpamTrashArg = False,
+        response_format: _ResponseFormatArg = ResponseFormat.JSON,
+    ) -> str:
         """Search threads matching a Gmail query.
 
         Returns the thread ID, a snippet of the most recent message, and counts.
@@ -361,12 +344,12 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
             svc = service_provider()
             req_args: dict[str, Any] = {
                 "userId": "me",
-                "q": params.query,
-                "maxResults": params.max_results,
-                "includeSpamTrash": params.include_spam_trash,
+                "q": query,
+                "maxResults": max_results,
+                "includeSpamTrash": include_spam_trash,
             }
-            if params.page_token:
-                req_args["pageToken"] = params.page_token
+            if page_token:
+                req_args["pageToken"] = page_token
             listing = svc.users().threads().list(**req_args).execute()
 
             threads = [
@@ -384,10 +367,10 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
                 "next_page_token": next_token,
                 "threads": threads,
             }
-            if params.response_format == ResponseFormat.JSON:
+            if response_format == ResponseFormat.JSON:
                 return to_json(payload)
 
-            lines = [f"# Threads matching `{params.query}`", ""]
+            lines = [f"# Threads matching `{query}`", ""]
             if not threads:
                 lines.append("_No results._")
             else:
@@ -404,7 +387,11 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_get_message",
         annotations=_read_only_annotations("Gmail: Get Message"),
     )
-    async def gmail_get_message(params: GetMessageInput) -> str:
+    async def gmail_get_message(
+        message_id: _MessageIdArg,
+        max_body_chars: _MaxBodyCharsArg = 20000,
+        include_html: _IncludeHtmlArg = False,
+    ) -> str:
         """Fetch a single message by ID with decoded body and attachment metadata.
 
         Attachments are NOT downloaded in Phase 1 — only their filenames, MIME
@@ -421,13 +408,8 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         """
         try:
             svc = service_provider()
-            msg = (
-                svc.users()
-                .messages()
-                .get(userId="me", id=params.message_id, format="full")
-                .execute()
-            )
-            return to_json(_full_message(msg, params.max_body_chars, params.include_html))
+            msg = svc.users().messages().get(userId="me", id=message_id, format="full").execute()
+            return to_json(_full_message(msg, max_body_chars, include_html))
         except Exception as e:
             return handle_google_error(e)
 
@@ -435,7 +417,11 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         name="gmail_get_thread",
         annotations=_read_only_annotations("Gmail: Get Thread"),
     )
-    async def gmail_get_thread(params: GetThreadInput) -> str:
+    async def gmail_get_thread(
+        thread_id: _ThreadIdArg,
+        max_body_chars: _MaxBodyCharsArg = 10000,
+        include_html: _IncludeHtmlArg = False,
+    ) -> str:
         """Fetch a single thread by ID with all messages, ordered oldest-first.
 
         Each per-message body is truncated to `max_body_chars` (default 10000)
@@ -450,12 +436,9 @@ def register(mcp: FastMCP, service_provider: ServiceProvider) -> None:
         """
         try:
             svc = service_provider()
-            thread = (
-                svc.users().threads().get(userId="me", id=params.thread_id, format="full").execute()
-            )
+            thread = svc.users().threads().get(userId="me", id=thread_id, format="full").execute()
             messages = [
-                _full_message(m, params.max_body_chars, params.include_html)
-                for m in thread.get("messages", [])
+                _full_message(m, max_body_chars, include_html) for m in thread.get("messages", [])
             ]
             return to_json(
                 {

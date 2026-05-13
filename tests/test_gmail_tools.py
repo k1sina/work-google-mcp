@@ -130,13 +130,12 @@ async def test_get_thread_returns_all_messages(mcp_with_gmail: FastMCP) -> None:
     assert out["messages"][1]["subject"] == "Re: Test message"
 
 
-async def test_extra_field_rejected(mcp_with_gmail: FastMCP) -> None:
-    """Pydantic `extra='forbid'` should reject unknown fields."""
-    # FastMCP wraps validation errors into its own exception class. We don't pin
-    # it to a specific type — only that *something* is raised when an unknown
-    # field is supplied.
-    with pytest.raises(Exception):  # noqa: B017 — see comment above
+async def test_invalid_arg_constraints(mcp_with_gmail: FastMCP) -> None:
+    """FastMCP/Pydantic should reject out-of-range arguments."""
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    with pytest.raises(ToolError):
         await mcp_with_gmail.call_tool(
             "gmail_search_messages",
-            {"query": "x", "bogus_field": True},
+            {"query": "x", "max_results": 999},  # > 100, violates ge/le
         )
